@@ -1,0 +1,11 @@
+services:
+  - type: web
+    name: telegram-ai-bot
+    env: python
+    plan: free
+    branch: main
+    buildCommand: pip install -r requirements.txt
+    startCommand: python main.py
+    envVars:
+      - key: TELEGRAM_TOKEN
+        value: 7651868828:AAFpGSd8dJ-AV2O8_lffVF-_kyx4A9r5HWU
