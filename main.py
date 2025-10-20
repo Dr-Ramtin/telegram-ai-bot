@@ -36,6 +36,7 @@ class FreeAIServices:
     async def close_session(self):
         if self.session:
             await self.session.close()
+            self.session = None
     
     async def query_llama_free(self, prompt):
         """استفاده از سرویس رایگان برای چت"""
@@ -67,14 +68,14 @@ class FreeAIServices:
                         return generated_text
                     return "🤖 پاسخ دریافت شد اما پردازش نشد."
                 else:
-                    return await self.fallback_chat(prompt)
+                    return self.fallback_chat_sync(prompt)
                     
         except Exception as e:
             logger.error(f"Error in query_llama_free: {e}")
-            return await self.fallback_chat(prompt)
+            return self.fallback_chat_sync(prompt)
     
-    async def fallback_chat(self, prompt):
-        """راهکار جایگزین برای چت"""
+    def fallback_chat_sync(self, prompt):
+        """راهکار جایگزین برای چت - نسخه سینکرون"""
         try:
             # پاسخ‌های از پیش تعریف شده برای سوالات متداول
             responses = {
@@ -93,7 +94,7 @@ class FreeAIServices:
             # پاسخ‌های عمومی
             general_responses = [
                 "سوال جالبی پرسیدید! در حال حاضر سرویس اصلی در دسترس نیست. 🔄",
-                "متوجه شدم. می‌توانید سوال خود را به صورت واضح‌تر بیان کنید? 💭",
+                "متوجه شدم. می‌توانید سوال خود را به صورت واضح‌تر بیان کنید؟ 💭",
                 "در حال حاضر امکان پاسخ دقیق وجود ندارد. لطفاً سوال دیگری بپرسید. ⏳",
                 "پاسخ به این سوال نیاز به منابع بیشتری دارد. سوال ساده‌تری بپرسید. 💡"
             ]
@@ -266,6 +267,7 @@ class SmartTelegramBot:
         self.db = DatabaseManager()
         self.ai_services = FreeAIServices()
         self.setup_limits()
+        self.reset_task = None
     
     def setup_limits(self):
         """تنظیم محدودیت‌های استفاده"""
@@ -283,6 +285,8 @@ class SmartTelegramBot:
     async def close(self):
         """بستن اتصالات"""
         await self.ai_services.close_session()
+        if self.reset_task:
+            self.reset_task.cancel()
     
     def detect_intent(self, text):
         """تشخیص هدف کاربر از پیام"""
@@ -474,17 +478,20 @@ class SmartTelegramBot:
                 "اگر مشکل ادامه داشت، سوال خود را به صورت متفاوت بیان کنید.\n\n"
                 "🔧 برای راهنمایی: /help"
             )
-
-async def reset_daily_limits_periodically(bot):
-    """بازنشانی دوره‌ای محدودیت‌های روزانه"""
-    while True:
-        try:
-            # هر 24 ساعت یکبار
-            await asyncio.sleep(24 * 60 * 60)  # 24 hours
-            await bot.db.reset_daily_limits()
-            logger.info("Daily limits reset successfully")
-        except Exception as e:
-            logger.error(f"Error resetting daily limits: {e}")
+    
+    async def reset_daily_limits_task(self):
+        """بازنشانی دوره‌ای محدودیت‌های روزانه"""
+        while True:
+            try:
+                # هر 24 ساعت یکبار
+                await asyncio.sleep(24 * 60 * 60)  # 24 hours
+                await self.db.reset_daily_limits()
+                logger.info("Daily limits reset successfully")
+            except asyncio.CancelledError:
+                logger.info("Reset task cancelled")
+                break
+            except Exception as e:
+                logger.error(f"Error resetting daily limits: {e}")
 
 async def main():
     """تابع اصلی اجرای بات"""
@@ -513,13 +520,16 @@ async def main():
     # هندلر پیام‌های متنی - استفاده از filters.TEXT
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, bot.handle_message))
     
-    # شروع کار بازنشانی دوره‌ای
-    asyncio.create_task(reset_daily_limits_periodically(bot))
-    
     # راه‌اندازی بات
     try:
         logger.info("✅ Bot is starting...")
-        await application.run_polling()
+        
+        # شروع task بازنشانی در background
+        bot.reset_task = asyncio.create_task(bot.reset_daily_limits_task())
+        
+        # اجرای بات
+        await application.run_polling(allowed_updates=Update.ALL_TYPES)
+        
     except Exception as e:
         logger.error(f"❌ Bot stopped with error: {e}")
     finally:
