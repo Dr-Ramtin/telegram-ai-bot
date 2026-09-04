@@ -8,4 +8,4 @@ services:
     startCommand: python main.py
     envVars:
       - key: TELEGRAM_TOKEN
-        # مقدار توکن را از اینجا حذف کنید
+     
